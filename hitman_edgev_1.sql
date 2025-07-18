@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Jul 04, 2025 at 01:56 PM
+-- Generation Time: Jul 18, 2025 at 06:48 AM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -18,7 +18,7 @@ SET time_zone = "+00:00";
 /*!40101 SET NAMES utf8mb4 */;
 
 --
--- Database: `hitman_edgev_1`
+-- Database: `hitman_edge_test`
 --
 
 -- --------------------------------------------------------
@@ -115,6 +115,20 @@ CREATE TABLE `he_currencymaster` (
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_by` int(11) DEFAULT NULL,
   `updated_at` datetime DEFAULT NULL ON UPDATE current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `he_error_logs`
+--
+
+CREATE TABLE `he_error_logs` (
+  `id` int(11) NOT NULL,
+  `file_name` varchar(255) NOT NULL,
+  `error_description` text DEFAULT NULL,
+  `created_at` datetime DEFAULT current_timestamp(),
+  `created_by` varchar(100) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -745,6 +759,12 @@ ALTER TABLE `he_currencymaster`
   ADD KEY `updated_by` (`updated_by`);
 
 --
+-- Indexes for table `he_error_logs`
+--
+ALTER TABLE `he_error_logs`
+  ADD PRIMARY KEY (`id`);
+
+--
 -- Indexes for table `he_index_data`
 --
 ALTER TABLE `he_index_data`
@@ -943,6 +963,12 @@ ALTER TABLE `he_company`
 --
 ALTER TABLE `he_competitormaster`
   MODIFY `competitor_master_id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `he_error_logs`
+--
+ALTER TABLE `he_error_logs`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `he_industry`
