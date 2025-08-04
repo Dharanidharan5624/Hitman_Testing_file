@@ -1,64 +1,86 @@
-# database_connect.py
-
-import mysql.connector
+import os
+import sys
+import traceback
 import configparser
+import mysql.connector
+from mysql.connector import Error as MySQLError
 
-# Load config
-config = configparser.ConfigParser()
-config.read("D:\hitman edge\configure\config.ini")
+sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-if 'database' not in config:
-    raise KeyError("Missing [database] section in config.ini")
+# Attempt to import custom error logger
+try:
+    from he_error_logs import log_error_to_db
+except ImportError:
+    def log_error_to_db(file_name: str, error_description: str, created_by: str = "system", env: str = "dev"):
+        print(f"[ERROR LOGGER FAILED] {error_description}")
 
-# Database credentials from config
-db_host = config['database']['HE_HOSTNAME']
-db_port = config.getint('database', 'HE_PORT')
-db_user = config['database']['HE_DB_USERNAME']
-db_pass = config['database']['HE_DB_PASSWORD']
+# Global config cache
+_config = None
 
-def get_connection(database=None, root=False):
-    """Returns a MySQL connection. Use root=True to connect as root."""
-    user = "root" if root else db_user
-    password = "" if root else db_pass  # Modify if root password is used
+def load_config() -> configparser.ConfigParser:
+    """
+    Load and return configuration from config.ini file.
+    Caches the config to avoid repeated reads.
+    """
+    global _config
+    if _config:
+        return _config
 
-    connection_config = {
-        "host": db_host,
-        "port": db_port,
-        "user": user,
-        "password": password,
+    config_path = os.path.join(r"C:\Hitman Edge", "config.ini")
+
+    if not os.path.exists(config_path):
+        msg = f"Config file not found: {config_path}"
+        print(f"[ERROR] {msg}")
+        log_error_to_db("he_database_connect.py", msg)
+        sys.exit(1)
+
+    config = configparser.ConfigParser()
+    config.read(config_path)
+
+    if 'database' not in config:
+        msg = "Missing [database] section in config.ini"
+        print(f"[ERROR] {msg}")
+        log_error_to_db("he_database_connect.py", msg)
+        sys.exit(1)
+
+    _config = config
+    return config
+
+def get_connection(env: str = 'dev') -> mysql.connector.connection.MySQLConnection:
+    """
+    Establish and return a MySQL database connection based on the given environment.
+
+    :param env: The environment key ('dev', 'test', 'prod')
+    :return: MySQLConnection object
+    """
+    config = load_config()
+    db = config['database']
+
+    env_mapping = {
+        'dev': 'HE_DB_DEV',
+        'test': 'HE_DB_TEST',
+        'prod': 'HE_DB_PROD'
     }
 
-    if database:
-        connection_config["database"] = database
+    if env not in env_mapping or env_mapping[env] not in db:
+        msg = f"Invalid or missing environment key in config: {env}"
+        print(f"[ERROR] {msg}")
+        log_error_to_db("he_database_connect.py", msg, env=env)
+        sys.exit(1)
 
     try:
-        return mysql.connector.connect(**connection_config)
-    except mysql.connector.Error as err:
-        print(f"[ERROR] MySQL connection failed: {err}")
-        return None
+        conn = mysql.connector.connect(
+            host=db.get('HE_HOSTNAME'),
+            port=int(db.get('HE_PORT', 3306)),
+            user=db.get('HE_DB_USERNAME'),
+            password=db.get('HE_DB_PASSWORD'),
+            database=db.get(env_mapping[env])
+        )
+        print(f"[INFO] Successfully connected to {env} database.")
+        return conn
 
-# C:\ 
-#     └── hitman edge\
-#         ├── configure\           
-#         │   └── config.ini         
-#         ├── database\            
-#         │   ├── schema.sql
-#         │   ├── data.sql
-#         │   └── ... (other .sql files)
-#         ├── Powerbuilder\        
-#         │   └── app.pbl          
-#         └── script\                
-#             ├── He_Portfolio.py
-#             ├── database_connect.py
-#             └── ... (other .py files)
-
-
-
-# D:\ 
-#     └── hitman edge\
-#         ├── configure\           
-#         │   └── config.ini                   
-#         └── script\                
-#             ├── database_connect.py 
-#             ├── He_Portfolio.py
-#             └──  (other He__.py files)
+    except MySQLError as err:
+        error_details = traceback.format_exc()
+        print(f"[ERROR] Database connection failed: {err}")
+        log_error_to_db("he_database_connect.py", error_details, created_by="DB_CONNECT", env=env)
+        sys.exit(1)
