@@ -1,16 +1,18 @@
-import mysql.connector
 from collections import deque
 from tabulate import tabulate
+import mysql.connector
+import traceback
+from he_database_connect import get_connection
+from he_error_logs import log_error_to_db  
 
-# === Buy transaction processing ===
-def process_buy(holdings, cumulative_buy_cost, one, balance_qty, date,ticker, buy_qty, price):
+def process_buy(holdings, cumulative_buy_cost, one, balance_qty, date, ticker, buy_qty, price):
     total_cost = buy_qty * price
-    holdings.append([buy_qty, price, buy_qty])  # qty, price, remaining qty
+    holdings.append([buy_qty, price, buy_qty])  
 
     cumulative_buy_cost += total_cost
     one += buy_qty
-
     balance_qty += buy_qty
+
     avg_cost = cumulative_buy_cost / balance_qty if balance_qty > 0 else 0
 
     return holdings, cumulative_buy_cost, one, balance_qty, [
@@ -18,43 +20,41 @@ def process_buy(holdings, cumulative_buy_cost, one, balance_qty, date,ticker, bu
         cumulative_buy_cost, balance_qty, round(avg_cost, 2)
     ]
 
-# === Sell transaction processing (1st batch only) ===
 def process_sell(holdings, cumulative_buy_cost, one, balance_qty, date, ticker, sell_qty, price, sale_price):
     if not holdings or sell_qty <= 0:
-        print("⚠️ No holdings available or sell quantity is zero.")
+        print("No holdings available or sell quantity is zero.")
         return holdings, cumulative_buy_cost, one, balance_qty, []
 
     realized_cost = 0
+    total_sell_value = 0
+    sell_profit = 0
+    qty_to_sell = sell_qty
 
-    qty_sold = min(sell_qty, holdings[0][2])  # available in 1st batch
-    buy_qty, buy_price, bal_qty = holdings[0]
-    sale_price = price
+    while qty_to_sell > 0 and holdings:
+        buy_qty, buy_price, bal_qty = holdings[0]
+        qty_sold = min(qty_to_sell, bal_qty)
 
-    realized_cost = qty_sold * buy_price
-    sell_profit = ( buy_price - sale_price)
-    total_sell_value = sell_profit * qty_sold
+        realized_cost += qty_sold * buy_price
+        sell_profit += (sale_price - buy_price) * qty_sold
+        total_sell_value += qty_sold * sale_price
 
-    # Adjust holdings
-    holdings = list(holdings)
-    if qty_sold == bal_qty:
-        holdings.pop(0)
-    else:
-        holdings[0][2] -= qty_sold
-    holdings = deque(holdings)
+        if qty_sold == bal_qty:
+            holdings.popleft()
+        else:
+            holdings[0][2] -= qty_sold
 
-    # Update totals
+        qty_to_sell -= qty_sold
+
     cumulative_buy_cost -= realized_cost
-    one = one - sell_qty 
-  
+    one -= sell_qty
     balance_qty -= sell_qty
     avg_cost = cumulative_buy_cost / balance_qty if balance_qty > 0 else 0
 
     return holdings, cumulative_buy_cost, one, balance_qty, [
-        date, ticker, "Sell", sell_qty, one, price, sale_price, sell_profit,
-        realized_cost, total_sell_value, cumulative_buy_cost, balance_qty, round(avg_cost, 2)
+        date, ticker, "Sell", sell_qty, one, price, sale_price, round(sell_profit, 2),
+        realized_cost, round(total_sell_value, 2), cumulative_buy_cost, balance_qty, round(avg_cost, 2)
     ]
 
-# === FIFO processor ===
 def fifo_tracker(transactions, cursor, db):
     holdings = deque()
     balance_qty = 0
@@ -66,7 +66,7 @@ def fifo_tracker(transactions, cursor, db):
     for date, ticker, action, qty, price, *sale_price in transactions:
         action = action.strip().capitalize()
         if action not in ["Buy", "Sell"]:
-            print(f"⚠️ Skipping unknown action: {action}")
+            print(f"Skipping unknown action: {action}")
             continue
 
         if action == "Buy":
@@ -85,7 +85,7 @@ def fifo_tracker(transactions, cursor, db):
 
     if insert_queries:
         cursor.executemany("""
-            INSERT INTO avgs (
+            INSERT INTO he_avgs (
                 date, ticker, action, qty, balance_qty, price, sale_price, sell_profit,
                 total_cost, sell_total_profit, cumulative_buy_cost, cumulative_total_qty, avg_cost
             )
@@ -98,32 +98,31 @@ def fifo_tracker(transactions, cursor, db):
         "Total Cost", "Sell Total Profit", "Cumulative Total Cost", "Cumulative Total Qty", "Average Cost"
     ], tablefmt="grid")
 
-# === Wrapper to store processed FIFO to DB ===
 def store_data_in_db(data):
     try:
-        conn = mysql.connector.connect(
-            host="localhost", user="root", password="123", database="hitman"
-        )
+        conn = get_connection()
         cursor = conn.cursor()
         result_table = fifo_tracker(data, cursor, conn)
         cursor.close()
         conn.close()
-        print("✅ FIFO data stored successfully.")
+        print("FIFO data stored successfully.")
         return result_table
     except mysql.connector.Error as err:
-        print(f"❌ Database Error: {err}")
+        error_description = traceback.format_exc()
+        log_error_to_db("he_average_cost_scenarios.py", error_description, created_by="fifo_module", env="dev")
+        return None
+    except Exception as e:
+        error_description = traceback.format_exc()
+        log_error_to_db("he_average_cost_scenarios.py", error_description, created_by="fifo_module", env="dev")
         return None
 
-# === Fetch data from `stock_transactions` table ===
 def fetch_fifo_data():
     try:
-        conn = mysql.connector.connect(
-            host="localhost", user="root", password="123", database="hitman"
-        )
+        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
             SELECT activity_date, instrument, tran_code, quantity, price
-            FROM stock_transactions
+            FROM he_stock_transactions
             WHERE instrument IS NOT NULL
             ORDER BY instrument ASC;
         """)
@@ -131,23 +130,25 @@ def fetch_fifo_data():
         cursor.close()
         conn.close()
 
-        print("📥 Fetched Transactions:")
+        print("Fetched Transactions:")
         print(tabulate(rows, headers=["Date", "Ticker", "Action", "Qty", "Price"], tablefmt="grid"))
 
-        # Append placeholder for sale_price for consistency
         return [row + (None,) for row in rows]
-
     except mysql.connector.Error as err:
-        print(f"❌ Database Error: {err}")
+        error_description = traceback.format_exc()
+        log_error_to_db("he_average_cost_scenarios.py", error_description, created_by="fifo_module", env="dev")
+        return []
+    except Exception as e:
+        error_description = traceback.format_exc()
+        log_error_to_db("he_average_cost_scenarios.py", error_description="Database Error: {err}", created_by="fifo_module", env="dev")
         return []
 
-# === Main Execution ===
 if __name__ == "__main__":
     transactions = fetch_fifo_data()
     if transactions:
         output_table = store_data_in_db(transactions)
         if output_table:
-            print("\n📊 FIFO Calculation Result:")
+            print("\nFIFO Calculation Result:")
             print(output_table)
     else:
-        print("⚠️ No transactions found to process.")
+        print("No transactions found to process.")
