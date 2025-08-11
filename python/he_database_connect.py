@@ -18,7 +18,7 @@ def load_config():
     if _config:
         return _config
 
-    config_path = os.path.join("C:\Hitman\Hitman Edge\config\config.ini")
+    config_path = os.path.join("C:\HitmanEdge\config\config.ini")
     if not os.path.exists(config_path):
         msg = f"Config file not found: {config_path}"
         print(msg)
